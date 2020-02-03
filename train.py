@@ -14,6 +14,7 @@ from sklearn.metrics import confusion_matrix
 from mlxtend.plotting import plot_confusion_matrix
 import numpy as np
 
+import focalLoss
 # weights and biases login
 import wandb
 
@@ -84,8 +85,8 @@ class Net(nn.Module):
         x = self.drop(x)
         x = x.view(-1, 4 * conf["height"] * conf["width"] // (32 ** 2))
         x = self.fc1(x)
-
-        return x
+        x = F.softmax(x, dim=1)  # apply softmax along dim 1 (dim 0 is the different batches)
+        return x  # output should be batch size * 2, with probabilities.
 
 
 net = Net()
@@ -140,14 +141,14 @@ wandb.log({"test set": sample})  # test set is iterable, it's tuples of PIL imag
 test_loader = torch.utils.data.DataLoader(test_set, batch_size=conf["batch_size"],
                                           shuffle=True, num_workers=2)
 
-criterion = nn.CrossEntropyLoss()
+# criterion = nn.NLLLoss()
+criterion = focalLoss.FocalLoss()
 optimizer = optim.SGD(net.parameters(), lr=conf["learning_rate"], momentum=conf["momentum"])
 running_loss = 0.0
 for epoch in range(conf["epochs"]): # for the specified number of epochs
     for i, data in enumerate(train_loader, 0):  # i here is the batch number
 
         # report!
-
         if i % (train_length // conf["reports_per_epoch"]) == 0:
             with torch.no_grad():
                 net.eval()  # set to evaluation (no batch norm or dropout)
@@ -160,9 +161,13 @@ for epoch in range(conf["epochs"]): # for the specified number of epochs
                 first = True
                 for d in test_loader:
                     inputs, labels = d[0].to(device), d[1].to(device)
+                    # print(labels)
                     outputs = net(inputs)
-                    _, predicted = torch.max(outputs.data, 1)
+                    # print(outputs)
+                    _, predicted = torch.max(outputs.data, 1)  # search for max along dimension 1, also note that index.
+                    # print(predicted)
                     total += labels.size(0)
+
                     l, p = Tensor.cpu(labels).numpy(), Tensor.cpu(predicted).numpy()
                     cm = confusion_matrix(l,p)
                     confm = np.add(confm, cm)
@@ -221,6 +226,8 @@ for epoch in range(conf["epochs"]): # for the specified number of epochs
         # forward + backward + optimize
         outputs = net(inputs)
         loss = criterion(outputs, labels)
+        # outputs are batchsize x 2
+        # labels are batchsize, with each entry being the correct label.
         loss.backward()
         optimizer.step()
 
